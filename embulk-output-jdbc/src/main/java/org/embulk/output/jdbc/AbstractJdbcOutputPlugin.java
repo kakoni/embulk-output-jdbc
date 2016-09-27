@@ -108,6 +108,10 @@ public abstract class AbstractJdbcOutputPlugin
         @ConfigDefault("null")
         public Optional<List<String>> getMergeRule();
 
+        @Config("merge_condition")
+        @ConfigDefault("null")
+        public Optional<String> getMergeCondition();
+
         public void setActualTable(String actualTable);
         public String getActualTable();
 
@@ -699,7 +703,7 @@ public abstract class AbstractJdbcOutputPlugin
             if (task.getNewTableSchema().isPresent()) {
                 con.createTableIfNotExists(task.getActualTable(), task.getNewTableSchema().get());
             }
-            con.collectMerge(task.getIntermediateTables().get(), schema, task.getActualTable(), new MergeConfig(task.getMergeKeys().get(), task.getMergeRule()));
+            con.collectMerge(task.getIntermediateTables().get(), schema, task.getActualTable(), new MergeConfig(task.getMergeKeys().get(), task.getMergeRule(), task.getMergeCondition()));
             break;
 
         case REPLACE:
@@ -848,7 +852,7 @@ public abstract class AbstractJdbcOutputPlugin
         try {
             Optional<MergeConfig> config = Optional.absent();
             if (task.getMode() == Mode.MERGE_DIRECT) {
-                config = Optional.of(new MergeConfig(task.getMergeKeys().get(), task.getMergeRule()));
+                config = Optional.of(new MergeConfig(task.getMergeKeys().get(), task.getMergeRule(), task.getMergeCondition()));
             }
             batch = newBatchInsert(task, config);
         } catch (IOException | SQLException ex) {

@@ -49,10 +49,36 @@ public class PostgreSQLOutputConnection
     {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("WITH updated AS (");
-        sb.append("UPDATE ");
+        List<String> mergeKeys = mergeConfig.getMergeKeys();
+
+        sb.append("INSERT INTO ");
         quoteIdentifierString(sb, toTable);
-        sb.append(" SET ");
+        sb.append(" (");
+        for (int i = 0; i < schema.getCount(); i++) {
+            if (i != 0) { sb.append(", "); }
+            quoteIdentifierString(sb, schema.getColumnName(i));
+        }
+        sb.append(") ");
+        for (int i = 0; i < fromTables.size(); i++) {
+            if (i != 0) { sb.append(" UNION ALL "); }
+            sb.append("SELECT ");
+            for (int j = 0; j < schema.getCount(); j++) {
+                if (j != 0) { sb.append(", "); }
+                quoteIdentifierString(sb, schema.getColumnName(j));
+            }
+            sb.append(" FROM ");
+            quoteIdentifierString(sb, fromTables.get(i));
+        }
+        sb.append(" ON CONFLICT (");
+
+        for (int i = 0; i < mergeKeys.size(); i++) {
+            if (i != 0) { sb.append(", "); }
+            quoteIdentifierString(sb, mergeKeys.get(i));
+        }
+        sb.append(")");
+
+        sb.append(" DO UPDATE SET ");
+
         if (mergeConfig.getMergeRule().isPresent()) {
             List<String> rule = mergeConfig.getMergeRule().get();
             for (int i = 0; i < rule.size(); i++) {
@@ -63,84 +89,22 @@ public class PostgreSQLOutputConnection
             }
         } else {
             for (int i = 0; i < schema.getCount(); i++) {
-                if (i != 0) {
-                    sb.append(", ");
-                }
-                quoteIdentifierString(sb, schema.getColumnName(i));
-                sb.append(" = S.");
-                quoteIdentifierString(sb, schema.getColumnName(i));
+              if (i != 0) { sb.append(", "); }
+              quoteIdentifierString(sb, schema.getColumnName(i));
+              sb.append(" = EXCLUDED.");
+              quoteIdentifierString(sb, schema.getColumnName(i));
             }
         }
-        sb.append(" FROM (");
-        for (int i = 0; i < fromTables.size(); i++) {
-            if (i != 0) { sb.append(" UNION ALL "); }
-            sb.append("SELECT ");
-            for(int j = 0; j < schema.getCount(); j++) {
-                if (j != 0) { sb.append(", "); }
-                quoteIdentifierString(sb, schema.getColumnName(j));
-            }
-            sb.append(" FROM ");
-            quoteIdentifierString(sb, fromTables.get(i));
-        }
-        sb.append(") S");
-        sb.append(" WHERE ");
-        List<String> mergeKeys = mergeConfig.getMergeKeys();
-        for (int i = 0; i < mergeKeys.size(); i++) {
-            if (i != 0) { sb.append(" AND "); }
-            quoteIdentifierString(sb, toTable);
-            sb.append(".");
-            quoteIdentifierString(sb, mergeKeys.get(i));
-            sb.append(" = ");
-            sb.append("S.");
-            quoteIdentifierString(sb, mergeKeys.get(i));
-        }
-        sb.append(" RETURNING ");
-        for (int i = 0; i < mergeKeys.size(); i++) {
-            if (i != 0) { sb.append(", "); }
-            sb.append("S.");
-            quoteIdentifierString(sb, mergeKeys.get(i));
-        }
-        sb.append(") ");
 
-        sb.append("INSERT INTO ");
-        quoteIdentifierString(sb, toTable);
-        sb.append(" (");
-        for (int i = 0; i < schema.getCount(); i++) {
-            if (i != 0) { sb.append(", "); }
-            quoteIdentifierString(sb, schema.getColumnName(i));
+        if (mergeConfig.getMergeCondition().isPresent()) {
+          String rule = mergeConfig.getMergeCondition().get();
+          sb.append(" WHERE ");
+          sb.append(rule);
         }
-        sb.append(") ");
-        sb.append("SELECT DISTINCT ON (");
-        for (int i = 0; i < mergeKeys.size(); i++) {
-            if (i != 0) { sb.append(", "); }
-            quoteIdentifierString(sb, mergeKeys.get(i));
-        }
-        sb.append(") * FROM (");
-        for (int i = 0; i < fromTables.size(); i++) {
-            if (i != 0) { sb.append(" UNION ALL "); }
-            sb.append("SELECT ");
-            for(int j = 0; j < schema.getCount(); j++) {
-                if (j != 0) { sb.append(", "); }
-                quoteIdentifierString(sb, schema.getColumnName(j));
-            }
-            sb.append(" FROM ");
-            quoteIdentifierString(sb, fromTables.get(i));
-        }
-        sb.append(") S ");
-        sb.append("WHERE NOT EXISTS (");
-        sb.append("SELECT 1 FROM updated WHERE ");
-        for (int i = 0; i < mergeKeys.size(); i++) {
-            if (i != 0) { sb.append(" AND "); }
-            sb.append("S.");
-            quoteIdentifierString(sb, mergeKeys.get(i));
-            sb.append(" = ");
-            sb.append("updated.");
-            quoteIdentifierString(sb, mergeKeys.get(i));
-        }
-        sb.append(") ");
 
         return sb.toString();
     }
+
 
     protected void collectReplaceView(List<String> fromTables, JdbcSchema schema, String toTable) throws SQLException
     {
@@ -164,6 +128,12 @@ public class PostgreSQLOutputConnection
             return "TEXT";
         case "BLOB":
             return "BYTEA";
+        case "VARCHAR":
+            if (c.getDataLength() == Integer.MAX_VALUE) {
+                // getDataLength for varchar without length specifier will return 2147483647 .
+                // but cannot create column of varchar(2147483647) .
+                return "VARCHAR";
+            }
         default:
             return super.buildColumnTypeName(c);
         }
